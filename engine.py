@@ -126,7 +126,11 @@ def detect(path: Path, terms: list[str], model_name: str = "base",
             compute_type = "float16" if target_device == "cuda" else "int8"
             model = WhisperModel(model_name, device=target_device, compute_type=compute_type)
             segments, info = model.transcribe(
-                str(wav), language=None, word_timestamps=True, vad_filter=True
+                str(wav), language=None, word_timestamps=True, vad_filter=True,
+                beam_size=5, best_of=5, temperature=0.0, condition_on_previous_text=True,
+                vad_parameters={"min_silence_duration_ms": 450, "speech_pad_ms": 180},
+                no_speech_threshold=0.5, log_prob_threshold=-1.0,
+                compression_ratio_threshold=2.4, chunk_length=30
             )
             found: list[Hit] = []
             for segment in segments:
