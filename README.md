@@ -80,3 +80,30 @@ Drag-and-drop is registered on the whole interface, including tabs and input fie
 - Rendered audio is loudness-normalized to `-16 LUFS` with a `-1.5 dBTP` peak target. Bleep/custom-sound mixing does not attenuate the source according to the number of censored intervals. This makes quiet source recordings easier to hear while keeping peaks controlled.
 - Output is MP4. The renderer tries NVENC when available and falls back to `libx264`.
 - The application does not upload media. Model files are downloaded from the model registry on first use.
+
+## Stream downloads and censor presets
+
+The downloader uses a separate process so Stop also works during connection,
+extraction, or FFmpeg processing. Missing output folders are created automatically.
+Warnings are displayed, and the final path comes from yt-dlp after merging rather
+than guessing from filenames. Partial downloads remain on disk; resuming depends
+on the source protocol and the availability of the original stream fragments.
+Live streams start at the current point by default. Enable the YouTube checkbox
+only if you want to try downloading from the beginning (the broadcaster must allow it).
+For recordings requiring your account, select an exported Netscape cookies.txt file.
+Cookie files contain account credentials: keep them local and out of Git.
+
+Install or update with `python -m pip install --upgrade -r requirements.txt`.
+Full YouTube support needs the bundled yt-dlp EJS dependency and an installed
+JavaScript runtime: Deno (recommended), Node.js, or Bun. The app selects an installed
+runtime automatically. See https://github.com/yt-dlp/yt-dlp/wiki/EJS.
+
+Additional censor presets: Low Bleep (400 Hz), Double Bleep (pulsed 1 kHz),
+Noise (pink noise), Robot (modulated tone), Blur + Mute, Pixelate + Mute,
+and Blackout + Mute. Visual presets cover the entire frame during the marked
+intervals, mute speech, and re-encode video. All presets use the selected padding
+and merge overlapping intervals. The original five presets remain available.
+
+Run integration checks with `python -m unittest discover -s tests -v` in the
+installed virtual environment. They render all twelve presets with FFmpeg,
+download a local test video, and stop a stalled connection.

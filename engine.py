@@ -7,10 +7,17 @@ import re
 import shutil
 import subprocess
 import tempfile
+import threading
 import unicodedata
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Callable, Iterable
+
+
+CENSOR_MODES = ("Bleep", "Low Bleep", "Double Bleep", "Noise", "Robot", "Mute",
+                "Blur + Mute", "Pixelate + Mute", "Blackout + Mute", "Fast-Forward", "Cut", "Custom Sound")
+AUDIO_MODES = ("Bleep", "Low Bleep", "Double Bleep", "Noise", "Robot", "Mute", "Custom Sound")
+VISUAL_MODES = ("Blur + Mute", "Pixelate + Mute", "Blackout + Mute")
 
 
 class CensorError(RuntimeError):
@@ -191,19 +198,28 @@ def render(source: Path, destination: Path, hits: list[Hit], mode: str, padding_
 
     command = [ffmpeg, "-hide_banner", "-y", "-i", str(source)]
     graph: list[str] = []
-    if mode in ("Bleep", "Mute", "Custom Sound"):
+    if mode in AUDIO_MODES or mode in VISUAL_MODES:
         if not has_audio:
             raise CensorError("В исходном видео отсутствует аудиодорожка.")
         conditions = "+".join(f"between(t,{start:.6f},{end:.6f})" for start, end in ranges)
         graph.append(f"[0:a]volume=0:enable='{conditions}'[muted]")
-        if mode == "Mute":
+        if mode == "Mute" or mode in VISUAL_MODES:
             graph.append("[muted]loudnorm=I=-16:TP=-1.5:LRA=11[aout]")
         else:
             sounds: list[str] = []
             for index, (start, end) in enumerate(ranges):
                 duration_s = max(0.03, end - start)
-                if mode == "Bleep":
-                    graph.append(f"sine=frequency=1000:sample_rate=48000:duration={duration_s:.6f},volume=0.35,adelay={round(start * 1000)}|{round(start * 1000)}[s{index}]")
+                if mode != "Custom Sound":
+                    if mode == "Noise":
+                        sound = f"anoisesrc=color=pink:amplitude=0.18:sample_rate=48000:duration={duration_s:.6f}"
+                    elif mode == "Robot":
+                        sound = f"aevalsrc=0.15*sin(2*PI*220*t)*sin(2*PI*30*t):s=48000:d={duration_s:.6f}"
+                    else:
+                        frequency = 400 if mode == "Low Bleep" else 1000
+                        sound = f"sine=frequency={frequency}:sample_rate=48000:duration={duration_s:.6f},volume=0.35"
+                        if mode == "Double Bleep":
+                            sound += ",volume=0:enable='gte(mod(t,0.16),0.09)'"
+                    graph.append(f"{sound},afade=t=in:d=0.005,afade=t=out:st={max(0, duration_s - 0.005):.6f}:d=0.005,adelay={round(start * 1000)}|{round(start * 1000)}[s{index}]")
                 else:
                     command.extend(["-stream_loop", "-1", "-i", str(custom_sound)])
                     input_index = index + 1
@@ -212,7 +228,21 @@ def render(source: Path, destination: Path, hits: list[Hit], mode: str, padding_
             graph.append("[muted]" + "".join(sounds) +
                          f"amix=inputs={len(sounds) + 1}:duration=first:dropout_transition=0:normalize=0,"
                          "loudnorm=I=-16:TP=-1.5:LRA=11[aout]")
-        command.extend(["-filter_complex", ";".join(graph), "-map", "0:v:0", "-map", "[aout]", "-c:v", "copy", "-c:a", "aac", "-b:a", "192k"])
+        video_map = "0:v:0"
+        video_codec = ["-c:v", "copy"]
+        if mode in VISUAL_MODES:
+            if mode == "Blur + Mute":
+                graph.append(f"[0:v]boxblur=12:2:enable='{conditions}'[vout]")
+            elif mode == "Blackout + Mute":
+                graph.append(f"[0:v]drawbox=x=0:y=0:w=iw:h=ih:color=black:t=fill:enable='{conditions}'[vout]")
+            else:
+                graph.append("[0:v]split[original][small]")
+                graph.append("[small]scale=w='max(2,trunc(iw/24))':h='max(2,trunc(ih/24))'[pixels]")
+                graph.append("[pixels][original]scale2ref=w=rw:h=rh:flags=neighbor[pixelated][base]")
+                graph.append(f"[base][pixelated]overlay=enable='{conditions}'[vout]")
+            video_map = "[vout]"
+            video_codec = ["-c:v", "libx264", "-preset", "veryfast", "-crf", "20", "-pix_fmt", "yuv420p"]
+        command.extend(["-filter_complex", ";".join(graph), "-map", video_map, "-map", "[aout]", *video_codec, "-c:a", "aac", "-b:a", "192k"])
     elif mode in ("Cut", "Fast-Forward"):
         boundaries: list[tuple[float, float, bool]] = []
         cursor = 0.0
@@ -266,6 +296,15 @@ def render(source: Path, destination: Path, hits: list[Hit], mode: str, padding_
         progress_args = args[:-1] + ["-progress", "pipe:1", "-nostats", args[-1]]
         process = subprocess.Popen(progress_args, stdout=subprocess.PIPE,
                                    stderr=subprocess.PIPE, text=True, bufsize=1)
+        errors: list[str] = []
+        def drain_errors():
+            if process.stderr:
+                for line in process.stderr:
+                    errors.append(line)
+                    if len(errors) > 100:
+                        del errors[:50]
+        reader = threading.Thread(target=drain_errors, daemon=True)
+        reader.start()
         current_seconds = 0.0
         assert process.stdout is not None
         for line in process.stdout:
@@ -278,8 +317,12 @@ def render(source: Path, destination: Path, hits: list[Hit], mode: str, padding_
                 if progress:
                     ratio = max(0.0, min(1.0, current_seconds / expected_duration))
                     progress(f"Рендеринг видео: {round(ratio * 100)}%")
-        stderr = process.stderr.read() if process.stderr else ""
-        return process.wait(), stderr
+        code = process.wait()
+        reader.join()
+        process.stdout.close()
+        if process.stderr:
+            process.stderr.close()
+        return code, "".join(errors)
 
     result_code, stderr = run_with_progress(command)
     if result_code and mode in ("Cut", "Fast-Forward") and nvenc_available:

@@ -17,7 +17,8 @@ from urllib.request import url2pathname
 import customtkinter as ctk
 from tkinterdnd2 import COPY, DND_FILES, REFUSE_DROP, TkinterDnD
 
-from engine import CensorError, Hit, detect, load_terms, probe_media, render
+from engine import CENSOR_MODES, CensorError, Hit, detect, load_terms, probe_media, render
+from downloads import download_stream
 from studio import (audio_peaks, chat_activity, parse_chat_log, read_project,
                     render_moment, transcript_to_srt, transcribe_video, visual_highlights, write_project)
 
@@ -27,7 +28,7 @@ DATA_DIR = Path.home() / ".local" / "share" / "cut-helper"
 HISTORY_FILE = DATA_DIR / "history.json"
 SETTINGS_FILE = DATA_DIR / "settings.json"
 LEGACY_HISTORY_FILE = APP_DIR / "censor_history.json"
-MODES = ["Bleep", "Mute", "Fast-Forward", "Cut", "Custom Sound"]
+MODES = list(CENSOR_MODES)
 MODEL_OPTIONS = ["small", "medium", "large-v3-turbo"]
 
 
@@ -48,6 +49,8 @@ class CensorApp(ctk.CTk, TkinterDnD.DnDWrapper):
         self.studio_video = ctk.StringVar()
         self.preview_url = ctk.StringVar()
         self.stream_url = ctk.StringVar()
+        self.stream_from_start = ctk.BooleanVar(value=False)
+        self.stream_cookies = ctk.StringVar()
         self.youtube_result = ctk.StringVar(value="")
         self.output_dir = ctk.StringVar(value=str(Path.home() / "Videos"))
         self.preview_dir = ctk.StringVar(value=str(Path.home() / "Pictures" / "Cut-Helper previews"))
@@ -230,7 +233,7 @@ class CensorApp(ctk.CTk, TkinterDnD.DnDWrapper):
                                            state="disabled")
         self.export_button.pack(side="right", padx=10)
 
-        youtube = ctk.CTkFrame(online_tab, width=900, height=390)
+        youtube = ctk.CTkFrame(online_tab, width=900, height=480)
         youtube.grid(row=0, column=1, padx=10, pady=10, sticky="new")
         youtube.grid_propagate(False)
         self.online_panel = youtube
@@ -260,6 +263,11 @@ class CensorApp(ctk.CTk, TkinterDnD.DnDWrapper):
         ctk.CTkLabel(youtube, text="Папка стримов").grid(row=6, column=0, padx=(12, 8), pady=(2, 8))
         ctk.CTkEntry(youtube, textvariable=self.stream_dir).grid(row=6, column=1, padx=4, pady=(2, 8), sticky="ew")
         ctk.CTkButton(youtube, text="Обзор…", width=90, command=lambda: self._choose_download_dir(self.stream_dir)).grid(row=6, column=2, padx=(8, 12), pady=(2, 8))
+
+        ctk.CTkCheckBox(youtube, text="YouTube: скачивать с начала эфира (если доступно)", variable=self.stream_from_start).grid(row=7, column=1, padx=4, pady=8, sticky="w")
+        ctk.CTkLabel(youtube, text="Cookies (опц.)").grid(row=8, column=0, padx=12)
+        ctk.CTkEntry(youtube, textvariable=self.stream_cookies, placeholder_text="cookies.txt для видео с доступом через аккаунт").grid(row=8, column=1, padx=4, sticky="ew")
+        ctk.CTkButton(youtube, text="Файл…", width=90, command=self._choose_stream_cookies).grid(row=8, column=2, padx=12)
 
         self.history_frame = ctk.CTkScrollableFrame(history_tab, label_text="Зацензуренные видео")
         self.history_frame.grid(row=0, column=0, padx=10, pady=10, sticky="nsew")
@@ -560,10 +568,12 @@ class CensorApp(ctk.CTk, TkinterDnD.DnDWrapper):
         def worker():
             try:
                 from yt_dlp import YoutubeDL
+                from downloads import runtime_options
                 preview_dir = Path(self.preview_dir.get()).expanduser()
                 preview_dir.mkdir(parents=True, exist_ok=True)
                 template = str(preview_dir / "%(title).150B [%(id)s].%(ext)s")
                 options = {
+                    **runtime_options(),
                     "skip_download": True,
                     "writethumbnail": True,
                     "noplaylist": True,
@@ -594,9 +604,11 @@ class CensorApp(ctk.CTk, TkinterDnD.DnDWrapper):
             messagebox.showerror("Неверная ссылка", "Вставьте ссылку на публичный стрим или запись YouTube/Twitch.")
             return
         output_dir = Path(self.stream_dir.get()).expanduser()
-        if not output_dir.is_dir():
-            messagebox.showerror("Папка не найдена", "Выберите существующую папку результата.")
+        cookies = self.stream_cookies.get().strip()
+        if cookies and not Path(cookies).expanduser().is_file():
+            messagebox.showerror("Cookies", "Выберите существующий файл cookies.txt.")
             return
+        from_start = self.stream_from_start.get()
         self._stream_stop.clear()
         self.stream_button.configure(state="disabled")
         self.stop_stream_button.configure(state="normal")
@@ -605,52 +617,18 @@ class CensorApp(ctk.CTk, TkinterDnD.DnDWrapper):
 
         def worker():
             try:
-                from yt_dlp import YoutubeDL
-                from yt_dlp.utils import DownloadError
-                template = str(output_dir / "%(title).150B [%(id)s].%(ext)s")
-
-                def report(data):
-                    if self._stream_stop.is_set():
-                        raise DownloadError("Остановлено пользователем")
-                    state = data.get("status")
-                    if state == "downloading":
-                        downloaded = data.get("downloaded_bytes", 0)
-                        total = data.get("total_bytes") or data.get("total_bytes_estimate")
-                        speed = data.get("speed")
-                        eta = data.get("eta")
-                        percent = downloaded / total if total else None
-                        self.events.put(("stream_progress", (percent, speed, eta, downloaded)))
-                    elif state == "finished":
-                        self.events.put(("stream_status", "Загрузка получена; объединяю аудио и видео…"))
-
-                options = {
-                    "format": "bestvideo*+bestaudio/best",
-                    "outtmpl": template,
-                    "merge_output_format": "mp4",
-                    "noplaylist": True,
-                    "live_from_start": True,
-                    "continuedl": True,
-                    "progress_hooks": [report],
-                    "quiet": True,
-                    "no_warnings": True,
-                }
-                with YoutubeDL(options) as downloader:
-                    info = downloader.extract_info(url, download=True)
-                video_id = str(info.get("id", ""))
-                files = [item for item in output_dir.iterdir()
-                         if item.is_file() and f"[{video_id}]" in item.stem
-                         and not item.name.endswith((".part", ".ytdl"))]
-                if not files:
-                    raise RuntimeError("Загрузка завершилась, но итоговый видеофайл не найден.")
-                result = max(files, key=lambda item: item.stat().st_mtime)
-                self.events.put(("stream_done", (info.get("title", "Стрим"), str(result))))
+                download_stream(url, output_dir, self._stream_stop, self.events.put,
+                                from_start=from_start, cookies=cookies)
             except Exception as exc:
-                if self._stream_stop.is_set():
-                    self.events.put(("stream_stopped", str(exc)))
-                else:
-                    self.events.put(("stream_error", str(exc)))
+                self.events.put(("stream_stopped" if self._stream_stop.is_set() else "stream_error", str(exc)))
 
-        threading.Thread(target=worker, daemon=True).start()
+        self._stream_thread = threading.Thread(target=worker, daemon=True)
+        self._stream_thread.start()
+
+    def _choose_stream_cookies(self):
+        name = filedialog.askopenfilename(title="Cookies в формате Netscape", filetypes=[("Cookies", "*.txt"), ("Все файлы", "*.*")])
+        if name:
+            self.stream_cookies.set(name)
 
     def _stop_stream(self):
         self._stream_stop.set()
@@ -808,6 +786,10 @@ class CensorApp(ctk.CTk, TkinterDnD.DnDWrapper):
             pass
 
     def _on_close(self):
+        self._stream_stop.set()
+        stream_thread = getattr(self, "_stream_thread", None)
+        if stream_thread is not None:
+            stream_thread.join(timeout=7)
         if self._geometry_save_job is not None:
             self.after_cancel(self._geometry_save_job)
         self._save_geometry()
