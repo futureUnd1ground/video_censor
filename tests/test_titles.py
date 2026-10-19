@@ -9,6 +9,37 @@ def transcript(*lines):
 
 
 class TitleTests(unittest.TestCase):
+    def test_p52_profile_names_actor_and_keeps_the_event(self):
+        title = short_title(transcript('Всем привет!', 'Я перепутал Папича с другим человеком!'), 0, 10, style='P52')
+        self.assertEqual(title, 'P52 ПЕРЕПУТАЛ ПАПИЧА С ДРУГИМ ЧЕЛОВЕКОМ!')
+        title = short_title(transcript('С третьей попытки наконец победил босса!'), 0, 5, style='P52')
+        self.assertEqual(title, 'P52 С ТРЕТЬЕЙ ПОПЫТКИ НАКОНЕЦ ПОБЕДИЛ БОССА!')
+
+    def test_p52_profile_topics_questions_and_present_tense(self):
+        cases = [('Я расскажу про первый компьютер.', 'P52 ПРО ПЕРВЫЙ КОМПЬЮТЕР'),
+                 ('Кого выберешь из этих трёх персонажей?', 'P52: КОГО ВЫБЕРЕШЬ ИЗ ЭТИХ ТРЁХ ПЕРСОНАЖЕЙ?'),
+                 ('Я не понимаю, почему эта игра не запускается!', 'P52 НЕ ПОНИМАЕТ, ПОЧЕМУ ЭТА ИГРА НЕ ЗАПУСКАЕТСЯ!')]
+        for text, expected in cases:
+            with self.subTest(text=text):
+                self.assertEqual(short_title(transcript(text), 0, 5, style='P52'), expected)
+
+    def test_p52_preserves_other_people_and_does_not_invent_emotions(self):
+        title = short_title(transcript('Дрейк встретил двойника в ТикТоке!'), 0, 5, style='P52')
+        self.assertEqual(title, 'P52: ДРЕЙК ВСТРЕТИЛ ДВОЙНИКА В ТИКТОКЕ!')
+        neutral = short_title(transcript('Обсуждаем настройки компьютера.'), 0, 5, style='P52')
+        self.assertNotIn('НЕ ОЖИДАЛ', neutral)
+        self.assertNotIn('ЗАСМЕЯЛСЯ', neutral)
+        self.assertNotIn('#', neutral)
+
+    def test_p52_reserves_name_budget_without_cutting_title(self):
+        segments = transcript('Я был уверен, что это голос Папича.',
+                              'Оказалось, что это вообще другой человек!')
+        title = short_title(segments, 0, 10, style='P52')
+        self.assertLessEqual(len(title), TITLE_LIMIT)
+        self.assertTrue(title.startswith('P52 '))
+        self.assertIn('ДРУГОЙ ЧЕЛОВЕК!', title)
+        reaction_title(title, 10)
+
     def test_uses_setup_and_late_reveal_instead_of_greeting(self):
         segments = transcript('Всем привет, ребята!', 'Сейчас попробуем угадать голос.',
                               'Я был уверен, что это голос Папича.',

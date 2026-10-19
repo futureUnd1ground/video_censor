@@ -242,12 +242,14 @@ def render_reaction(source, moment, destination, transcript=(), camera='Авто
 
 
 def create_shorts(source, output, *, model='small', length=35, count=5, camera='Авто',
-                  content='0,0,100,100', progress=None, title=''):
+                  content='0,0,100,100', progress=None, title='', title_style='P52'):
     source, output = Path(source), Path(output)
     parse_region(camera)
     parse_region(content)
     if not 10 <= length <= 60 or not 1 <= count <= 20:
         raise CensorError('Длина Shorts: 10–60 секунд; количество: 1–20.')
+    if title_style not in ('P52', 'По фрагменту'):
+        raise CensorError('Неизвестный стиль названия.')
     if title.strip():
         reaction_title(title, 1)
     duration, has_audio = probe_media(source)
@@ -263,7 +265,7 @@ def create_shorts(source, output, *, model='small', length=35, count=5, camera='
     output.mkdir(parents=True, exist_ok=True)
     output = Path(tempfile.mkdtemp(prefix="shorts-", dir=output))
     for index, moment in enumerate(moments, 1):
-        moment['title'] = title.strip() or short_title(transcript, moment['start'], moment['end'])
+        moment['title'] = title.strip() or short_title(transcript, moment['start'], moment['end'], style=title_style)
         filename_title = re.sub(r'[^\w -]', '', moment['title']).strip()[:60] or 'Shorts'
         destination = output / f'{index:02}_{filename_title}.mp4'
         paths.append(render_reaction(source, moment, destination, transcript, camera, content, progress))

@@ -34,7 +34,7 @@ def _content(text):
             if len(word) > 2 and word not in _STOP}
 
 
-def short_title(transcript, start, end):
+def _context_title(transcript, start, end, limit=TITLE_LIMIT):
     """Rank complete sentences/clauses and connected setup/payoff pairs, not prefixes."""
     parts = []
     for segment in sorted(transcript, key=lambda s: float(s['start'])):
@@ -60,7 +60,7 @@ def short_title(transcript, start, end):
             raw.append((part, cursor))
             cursor += len(part) + 1
     for sentence, offset in sentences:
-        if len(sentence.strip()) > TITLE_LIMIT:
+        if len(sentence.strip().upper()) > limit:
             clauses = re.split(r'[,;:]\s+(?!(?:что|как|почему|когда|чтобы|котор\w*|потому)\b)|\s+[—–]\s+|\s+(?=но\b|зато\b|в итоге\b)', sentence, flags=re.I)
             cursor = 0
             for clause in clauses:
@@ -73,7 +73,7 @@ def short_title(transcript, start, end):
         phrase = _FILLER.sub('', ' '.join(phrase.split())).strip(' ,;:—–-.…')
         phrase = re.sub(r'([!?])[!?]+', r'\1', phrase)
         key = phrase.casefold().rstrip('!?')
-        if not phrase or key in seen or len(phrase) > TITLE_LIMIT:
+        if not phrase or key in seen or len(phrase.upper()) > limit:
             continue
         seen.add(key)
         tokens = re.findall(r'[^\W\d_]+', phrase)
@@ -83,7 +83,7 @@ def short_title(transcript, start, end):
         phrases.append(dict(text=phrase, words=len(tokens), content=content, position=position))
     if not phrases:
         # Prefer a complete short segment to an arbitrary first-N-words cut.
-        short = next((part for part in reversed(parts) if len(part) <= TITLE_LIMIT and not _GENERIC.search(part)), None)
+        short = next((part for part in reversed(parts) if len(part.upper()) <= limit and not _GENERIC.search(part)), None)
         return short or 'Момент из стрима'
 
     phrases.sort(key=lambda phrase: phrase['position'])
@@ -117,10 +117,54 @@ def short_title(transcript, start, end):
             if setup['text'] in payoff['text'] or payoff['text'] in setup['text']:
                 continue
             combined = setup['text'].rstrip('!?') + ' — ' + payoff['text']
-            if len(combined) > TITLE_LIMIT or setup['words'] + payoff['words'] > 18:
+            if len(combined.upper()) > limit or setup['words'] + payoff['words'] > 18:
                 continue
             reveal = bool(_REVEAL.search(payoff['text']))
             score = (.55 * setup['score'] + .65 * payoff['score'] + .8
                      + min(.45, len(shared) * .15) + reveal)
             candidates.append((score, payoff['position'], combined))
     return max(candidates, key=lambda item: (item[0], item[1]))[2]
+
+
+_PRESENT = {
+    'думаю': 'думает', 'считаю': 'считает', 'помню': 'помнит', 'понимаю': 'понимает',
+    'знаю': 'знает', 'смотрю': 'смотрит', 'играю': 'играет', 'пытаюсь': 'пытается',
+    'хочу': 'хочет', 'рассказываю': 'рассказывает', 'вспоминаю': 'вспоминает',
+    'могу': 'может', 'буду': 'будет', 'угадываю': 'угадывает', 'выбираю': 'выбирает',
+}
+_TOPIC = re.compile(r'^(?:я\s+)?(?:расскажу|рассказывал|рассказываю|вспоминаю|'
+                    r'вспомнил|говорю|говорил|поговорим)\s+(про|о|об)\s+(.+)$', re.I)
+_PAST = re.compile(r'^(?:выиграл|проиграл|победил|сломал|перепутал|угадал|обманул|'
+                   r'спас|потерял|наш[её]л|получил|удалил|забыл|застрял|открыл|'
+                   r'попробовал|увидел|встретил|решил|рассказал|показал)\b', re.I)
+
+
+def short_title(transcript, start, end, style='По фрагменту'):
+    """P52 profile: actor + evidenced event, a topic, or an intact short question."""
+    if style not in ('P52', 'По фрагменту'):
+        raise ValueError('Неизвестный стиль названия: ' + str(style))
+    if style != 'P52':
+        return _context_title(transcript, start, end)
+    # Reserve room before ranking, so adding the name never cuts off the result.
+    base = _context_title(transcript, start, end, limit=TITLE_LIMIT - len('P52: '))
+    topic = _TOPIC.match(base)
+    person = re.match(r'^я\s+(не\s+)?(\w+)\b(.*)$', base, re.I)
+    if topic:
+        title = 'P52 ' + topic.group(1) + ' ' + topic.group(2)
+    elif person:
+        negative, verb, rest = person.groups()
+        verb_lower = verb.casefold()
+        if re.fullmatch(r'\w+л(?:ся)?', verb_lower) or verb_lower in ('мог', 'смог', 'должен'):
+            title = 'P52 ' + (negative or '') + verb + rest
+        elif verb_lower in _PRESENT:
+            title = 'P52 ' + (negative or '') + _PRESENT[verb_lower] + rest
+        else:
+            title = 'P52: ' + base
+    else:
+        # Only use an implicit subject for an actual leading action, not when
+        # another person is mentioned. Other people's names are preserved.
+        action = re.sub(r'^(?:с\s+\w+\s+(?:попытки|раза)\s+)?(?:наконец\s+)?', '', base, flags=re.I)
+        title = ('P52 ' if _PAST.match(action) else 'P52: ') + base
+    # The video overlay uses uppercase too; match the reference's title casing.
+    upper = title.upper()
+    return upper if len(upper) <= TITLE_LIMIT else title

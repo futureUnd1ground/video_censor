@@ -126,7 +126,14 @@ subtitles in this layout. Leave **Название** blank to build a title from
 sentences and connected setup/payoff phrases are ranked by recurring topics,
 actions, reactions, and reveals. Greetings are filtered out; sentences are not
 cut to their first eight words. Titles use the spoken text rather than invented
-events. You can also enter your own title (up to 96 characters). The title
+events. The default **Стиль → P52** profile adapts the event-focused, uppercase
+structure studied from [Drake Rofls Shorts](https://www.youtube.com/@DrakeRofls/shorts):
+`P52 + action/event`, `P52 ПРО + topic`, or `P52: + question/context`.
+First-person statements are changed to third person only for supported verb forms;
+other people's names remain intact. Emotion/action claims require evidence in the
+clip text. No Drake branding or hashtags are added. Choose **По фрагменту** to
+keep the previous contextual quote style. See [P52 title style](docs/title-style-p52.md).
+You can also enter your own title (up to 96 characters). The title
 is visible throughout the clip and included in its filename. Longer titles
 use a slightly smaller font and wrap across lines without dropping the ending. In automatic mode,
 the frame preview shows a sample title; the actual title is chosen after analysis.

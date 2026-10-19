@@ -135,7 +135,8 @@ class ShortsTests(unittest.TestCase):
             self.assertNotEqual(first[0].parent, second[0].parent)
             self.assertTrue(first[0].is_file())
             self.assertTrue(second[0].is_file())
-            self.assertIn('Мальчики и девочки', first[0].name)
+            self.assertIn('P52', first[0].name)
+            self.assertIn('мальчики и девочки', first[0].name.lower())
             self.assertIn('Моё название', second[0].name)
 
 

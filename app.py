@@ -81,6 +81,7 @@ class CensorApp(ctk.CTk, TkinterDnD.DnDWrapper):
         self.shorts_model = ctk.StringVar(value="small")
         self.shorts_frame_time = ctk.StringVar(value="0")
         self.shorts_title = ctk.StringVar()
+        self.shorts_title_style = ctk.StringVar(value="P52")
         self.project_path: Path | None = None
         self.hit_checks: list[ctk.CTkCheckBox] = []
         self.external_lists: list[Path] = []
@@ -314,8 +315,12 @@ class CensorApp(ctk.CTk, TkinterDnD.DnDWrapper):
             ctk.CTkEntry(options, textvariable=variable, width=60).pack(side="left", padx=(0, 12))
         ctk.CTkLabel(tab, text="Модель речи").grid(row=6, column=0, padx=14, pady=8, sticky="w")
         ctk.CTkOptionMenu(tab, variable=self.shorts_model, values=MODEL_OPTIONS).grid(row=6, column=1, sticky="w")
+        title_style = ctk.CTkFrame(tab, fg_color="transparent")
+        title_style.grid(row=6, column=2, padx=14, sticky="e")
+        ctk.CTkLabel(title_style, text="Стиль").pack(side="left", padx=(0, 6))
+        ctk.CTkOptionMenu(title_style, variable=self.shorts_title_style, values=["P52", "По фрагменту"], width=130).pack(side="left")
         ctk.CTkLabel(tab, text="Название (пусто — авто)").grid(row=7, column=0, padx=14, pady=8, sticky="w")
-        ctk.CTkEntry(tab, textvariable=self.shorts_title, placeholder_text="До 96 символов; автоматически — по всему фрагменту").grid(row=7, column=1, columnspan=2, padx=(0,14), pady=8, sticky="ew")
+        ctk.CTkEntry(tab, textvariable=self.shorts_title, placeholder_text="До 96 символов; пусто — авто в выбранном стиле").grid(row=7, column=1, columnspan=2, padx=(0,14), pady=8, sticky="ew")
         actions = ctk.CTkFrame(tab, fg_color="transparent")
         actions.grid(row=8, column=0, columnspan=3, padx=14, pady=14, sticky="w")
         self.shorts_preview_button = ctk.CTkButton(actions, text="Проверить кадр", command=self._preview_short_frame)
@@ -392,13 +397,14 @@ class CensorApp(ctk.CTk, TkinterDnD.DnDWrapper):
             return
         model = self.shorts_model.get()
         title = self.shorts_title.get().strip()
+        title_style = self.shorts_title_style.get()
         self._shorts_busy(True)
         self.status.set("Готовлю автоматическую нарезку…")
         self.progress.set(.05)
         def worker():
             try:
                 paths = create_shorts(source, output, model=model, length=length, count=count,
-                                      camera=camera, content=content, title=title,
+                                      camera=camera, content=content, title=title, title_style=title_style,
                                       progress=lambda text: self.events.put(("studio_status", text)))
                 self.events.put(("shorts_done", [str(path) for path in paths]))
             except Exception as exc:
