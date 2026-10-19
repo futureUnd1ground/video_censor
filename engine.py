@@ -331,6 +331,17 @@ def render(source: Path, destination: Path, hits: list[Hit], mode: str, padding_
         if progress:
             progress("NVENC не сработал, продолжаю рендер на CPU…")
         result_code, stderr = run_with_progress(fallback)
+    if result_code and "-c:v" in command and command[command.index("-c:v") + 1] == "copy" and (
+        "could not find tag for codec" in stderr.casefold()
+        or "codec not currently supported in container" in stderr.casefold()
+    ):
+        fallback = command.copy()
+        codec_index = fallback.index("-c:v") + 1
+        fallback[codec_index:codec_index + 1] = [
+            "libx264", "-preset", "veryfast", "-crf", "18", "-pix_fmt", "yuv420p"]
+        if progress:
+            progress("Исходный кодек несовместим с MP4; сохраняю видео в H.264…")
+        result_code, stderr = run_with_progress(fallback)
     if result_code:
         details = stderr.strip().splitlines()[-12:]
         raise CensorError("Ошибка FFmpeg:\n" + "\n".join(details))

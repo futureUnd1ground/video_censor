@@ -19,6 +19,30 @@ def audio_rms(path, start, duration):
 
 
 class RenderTests(unittest.TestCase):
+    def test_dnxhd_source_exports_to_mp4(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            source = root / 'editing-source.mov'
+            subprocess.run([
+                'ffmpeg', '-v', 'error', '-y', '-f', 'lavfi', '-i',
+                'testsrc2=size=320x180:rate=25:duration=1.2',
+                '-f', 'lavfi', '-i', 'sine=frequency=600:duration=1.2',
+                '-c:v', 'dnxhd', '-profile:v', 'dnxhr_lb', '-pix_fmt', 'yuv422p',
+                '-c:a', 'pcm_s16le', '-shortest', str(source)], check=True)
+            original_rms = audio_rms(source, .1, .2)
+            for mode in ('Mute', 'Bleep'):
+                with self.subTest(mode=mode):
+                    output = root / f'{mode}.mp4'
+                    render(source, output, [Hit('word', .5, .8)], mode, 0)
+                    data = json.loads(subprocess.check_output([
+                        'ffprobe', '-v', 'error', '-show_entries',
+                        'format=duration:stream=codec_type,codec_name', '-of', 'json', str(output)]))
+                    codecs = {stream['codec_type']: stream['codec_name'] for stream in data['streams']}
+                    self.assertEqual(codecs, {'video': 'h264', 'audio': 'aac'})
+                    self.assertAlmostEqual(float(data['format']['duration']), 1.2, delta=.1)
+                    difference_db = 20 * math.log10(audio_rms(output, .1, .2) / original_rms)
+                    self.assertLess(abs(difference_db), .5)
+
     def test_every_mode_renders_expected_duration(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
@@ -43,6 +67,12 @@ class RenderTests(unittest.TestCase):
                     expected = 1.5 if mode == 'Cut' else 2 - .5 * 2/3 if mode == 'Fast-Forward' else 2
                     self.assertAlmostEqual(float(data['format']['duration']), expected, delta=.16)
                     self.assertEqual({s['codec_type'] for s in data['streams']}, {'video', 'audio'})
+                    if mode == 'Mute':
+                        def video_hash(path):
+                            return subprocess.check_output([
+                                'ffmpeg', '-v', 'error', '-i', str(path), '-map', '0:v:0',
+                                '-c:v', 'copy', '-f', 'hash', 'pipe:1'])
+                        self.assertEqual(video_hash(source), video_hash(output))
                     # Both quiet and loud speech must keep their original level,
                     # including after timeline changes in Cut / Fast-Forward.
                     for start, original_rms in reference:
