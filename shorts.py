@@ -7,6 +7,7 @@ import re
 import statistics
 import subprocess
 import tempfile
+import textwrap
 
 from engine import CensorError, probe_media, require_tools
 from studio import _escape_filter_path, audio_peaks, transcribe_video
@@ -77,7 +78,7 @@ def select_moments(transcript, duration, length=35, count=5, signals=()):
                        and float(s['end']) > float(s['start']) and float(s['start']) < duration),
                       key=lambda s: float(s['start']))
     if not segments:
-        raise CensorError("Речь не найдена: не удалось выбрать моменты для Shorts с субтитрами.")
+        raise CensorError("Речь не найдена: не удалось выбрать моменты для Shorts.")
     candidates = []
     for segment in segments:
         start = max(0., float(segment['start']) - .15)
@@ -120,33 +121,36 @@ def _ass_time(seconds):
     return f'{hours}:{minutes:02}:{seconds:02}.{ticks:02}'
 
 
-def reaction_captions(transcript, start, end):
-    """Short, word-timed phrases near the lower edge of the streamer panel."""
-    words = []
+def short_title(transcript, start, end):
+    """Choose a short quote from the clip without inventing a description."""
+    phrases = []
     for segment in transcript:
         if float(segment['end']) <= start or float(segment['start']) >= end:
             continue
-        timed = segment.get('words') or []
-        if not timed:
-            tokens = str(segment.get('text', '')).split()
-            span = (float(segment['end']) - float(segment['start'])) / max(1, len(tokens))
-            timed = [dict(word=text, start=float(segment['start']) + index * span,
-                          end=float(segment['start']) + (index + 1) * span) for index, text in enumerate(tokens)]
-        for word in timed:
-            a, b = max(start, float(word['start'])), min(end, float(word['end']))
-            text = ' '.join(str(word.get('word', '')).split()).replace('\\', '/').replace('{', '(').replace('}', ')').upper()
-            if b > a and text:
-                words.append(dict(start=a - start, end=b - start, text=text))
-    words.sort(key=lambda w: w['start'])
-    groups, current = [], []
-    for word in words:
-        if current and (len(current) >= 4 or len(' '.join(w['text'] for w in current) + ' ' + word['text']) > 26
-                        or word['end'] - current[0]['start'] > 1.5 or word['start'] - current[-1]['end'] > .4):
-            groups.append(current)
-            current = []
-        current.append(word)
-    if current:
-        groups.append(current)
+        words = segment.get('words')
+        text = (' '.join(str(w.get('word', '')) for w in words
+                         if float(w['end']) > start and float(w['start']) < end)
+                if words else str(segment.get('text', '')))
+        phrases.extend(phrase.strip() for phrase in re.split(r'[.!?…]+', text) if phrase.strip())
+    if not phrases:
+        return 'Момент из стрима'
+    phrase = max(phrases, key=lambda text: (2 <= len(text.split()) <= 8, min(len(text.split()), 8), -len(text)))
+    title = []
+    for word in phrase.split():
+        if len(' '.join(title + [word])) > 64:
+            break
+        title.append(word)
+        if len(title) == 8:
+            break
+    return ' '.join(title) or phrase[:64]
+
+
+def reaction_title(title, duration):
+    """One persistent yellow title; no word-timed speech captions."""
+    text = ' '.join(str(title).split()).replace('\\', '/').replace('{', '(').replace('}', ')').upper()
+    if not text or len(text) > 72:
+        raise CensorError('Название должно содержать от 1 до 72 символов.')
+    text = r'\N'.join(textwrap.wrap(text, width=26, break_on_hyphens=False))
     header = '''[Script Info]
 ScriptType: v4.00+
 PlayResX: 1080
@@ -160,11 +164,7 @@ Style: Reaction,DejaVu Sans,58,&H0000FFFF,&H0000FFFF,&H00000000,&H80000000,-1,0,
 [Events]
 Format: Layer,Start,End,Style,Name,MarginL,MarginR,MarginV,Effect,Text
 '''
-    events = []
-    for group in groups:
-        text = ' '.join(word['text'] for word in group)
-        events.append(f"Dialogue: 0,{_ass_time(group[0]['start'])},{_ass_time(group[-1]['end'])},Reaction,,0,0,0,,{text}")
-    return header + '\n'.join(events) + '\n'
+    return header + f"Dialogue: 0,0:00:00.00,{_ass_time(duration)},Reaction,,0,0,0,,{text}\n"
 
 
 def _crop(region):
@@ -174,7 +174,7 @@ def _crop(region):
 
 
 def render_reaction(source, moment, destination, transcript=(), camera='Авто', content='0,0,100,100',
-                    progress=None, preview=False):
+                    progress=None, preview=False, title=None):
     source, destination = Path(source), Path(destination)
     duration, _ = probe_media(source)
     start, end = max(0., float(moment['start'])), min(duration, float(moment['end']))
@@ -193,12 +193,11 @@ def render_reaction(source, moment, destination, transcript=(), camera='Авто
                  f"[cam]{_crop(camera_region)},scale=1080:672:force_original_aspect_ratio=increase,crop=1080:672,setsar=1[top]",
                  f"[main]{_crop(content_region)},scale=1080:1248:force_original_aspect_ratio=increase,crop=1080:1248,setsar=1[bottom]",
                  '[top][bottom]vstack=inputs=2[stack]']
-        output_label = '[stack]'
-        if transcript:
-            captions = Path(directory) / 'captions.ass'
-            captions.write_text(reaction_captions(transcript, start, end), encoding='utf-8')
-            graph.append(f"[stack]ass=filename='{_escape_filter_path(captions)}'[captioned]")
-            output_label = '[captioned]'
+        title = title or moment.get('title') or short_title(transcript, start, end)
+        title_file = Path(directory) / 'title.ass'
+        title_file.write_text(reaction_title(title, end - start), encoding='utf-8')
+        graph.append(f"[stack]ass=filename='{_escape_filter_path(title_file)}'[titled]")
+        output_label = '[titled]'
         command = [ffmpeg, '-hide_banner', '-loglevel', 'error', '-y', '-ss', str(start), '-i', str(source),
                    '-filter_complex', ';'.join(graph), '-map', output_label]
         if preview:
@@ -217,12 +216,14 @@ def render_reaction(source, moment, destination, transcript=(), camera='Авто
 
 
 def create_shorts(source, output, *, model='small', length=35, count=5, camera='Авто',
-                  content='0,0,100,100', progress=None):
+                  content='0,0,100,100', progress=None, title=''):
     source, output = Path(source), Path(output)
     parse_region(camera)
     parse_region(content)
     if not 10 <= length <= 60 or not 1 <= count <= 20:
         raise CensorError('Длина Shorts: 10–60 секунд; количество: 1–20.')
+    if title.strip():
+        reaction_title(title, 1)
     duration, has_audio = probe_media(source)
     if not has_audio:
         raise CensorError('Для автоматических Shorts нужна речь в аудиодорожке.')
@@ -236,6 +237,8 @@ def create_shorts(source, output, *, model='small', length=35, count=5, camera='
     output.mkdir(parents=True, exist_ok=True)
     output = Path(tempfile.mkdtemp(prefix="shorts-", dir=output))
     for index, moment in enumerate(moments, 1):
-        destination = output / f'{source.stem[:100]}_short_{index:02}.mp4'
+        moment['title'] = title.strip() or short_title(transcript, moment['start'], moment['end'])
+        filename_title = re.sub(r'[^\w -]', '', moment['title']).strip()[:60] or 'Shorts'
+        destination = output / f'{index:02}_{filename_title}.mp4'
         paths.append(render_reaction(source, moment, destination, transcript, camera, content, progress))
     return paths

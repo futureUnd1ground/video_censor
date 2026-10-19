@@ -80,6 +80,7 @@ class CensorApp(ctk.CTk, TkinterDnD.DnDWrapper):
         self.shorts_count = ctk.StringVar(value="5")
         self.shorts_model = ctk.StringVar(value="small")
         self.shorts_frame_time = ctk.StringVar(value="0")
+        self.shorts_title = ctk.StringVar()
         self.project_path: Path | None = None
         self.hit_checks: list[ctk.CTkCheckBox] = []
         self.external_lists: list[Path] = []
@@ -290,7 +291,7 @@ class CensorApp(ctk.CTk, TkinterDnD.DnDWrapper):
 
     def _build_shorts_tab(self, tab):
         tab.grid_columnconfigure(1, weight=1)
-        ctk.CTkLabel(tab, text="Стример сверху · контент снизу · жёлтые субтитры",
+        ctk.CTkLabel(tab, text="Стример сверху · контент снизу · жёлтое название",
                      font=ctk.CTkFont(size=18, weight="bold")).grid(row=0, column=0, columnspan=3, padx=14, pady=14, sticky="w")
         ctk.CTkLabel(tab, text="Исходное видео").grid(row=1, column=0, padx=14, pady=8, sticky="w")
         ctk.CTkEntry(tab, textvariable=self.shorts_video).grid(row=1, column=1, sticky="ew", pady=8)
@@ -313,8 +314,10 @@ class CensorApp(ctk.CTk, TkinterDnD.DnDWrapper):
             ctk.CTkEntry(options, textvariable=variable, width=60).pack(side="left", padx=(0, 12))
         ctk.CTkLabel(tab, text="Модель речи").grid(row=6, column=0, padx=14, pady=8, sticky="w")
         ctk.CTkOptionMenu(tab, variable=self.shorts_model, values=MODEL_OPTIONS).grid(row=6, column=1, sticky="w")
+        ctk.CTkLabel(tab, text="Название (пусто — авто)").grid(row=7, column=0, padx=14, pady=8, sticky="w")
+        ctk.CTkEntry(tab, textvariable=self.shorts_title, placeholder_text="До 72 символов; автоматически — короткая фраза из нарезки").grid(row=7, column=1, columnspan=2, padx=(0,14), pady=8, sticky="ew")
         actions = ctk.CTkFrame(tab, fg_color="transparent")
-        actions.grid(row=7, column=0, columnspan=3, padx=14, pady=14, sticky="w")
+        actions.grid(row=8, column=0, columnspan=3, padx=14, pady=14, sticky="w")
         self.shorts_preview_button = ctk.CTkButton(actions, text="Проверить кадр", command=self._preview_short_frame)
         self.shorts_preview_button.pack(side="left")
         self.shorts_button = ctk.CTkButton(actions, text="Создать Shorts автоматически", command=self._auto_shorts)
@@ -322,12 +325,13 @@ class CensorApp(ctk.CTk, TkinterDnD.DnDWrapper):
         ctk.CTkLabel(tab, text="Камера занимает верхнюю треть, контент — нижнюю часть. Области задаются в процентах исходного кадра.\n"
                      "Проверьте кадр: автопоиск лица может выбрать героя видео вместо стримера.\n"
                      "Моменты выбираются по речи и всплескам звука; это предварительный автоматический отбор.\n"
+                     "Жёлтым показывается постоянное название, субтитров речи нет. Название также включается в имя файла.\n"
                      "Готовые файлы: 1080×1920, исходная громкость. Каждый запуск сохраняется в новую папку.",
-                     justify="left", anchor="w", wraplength=760).grid(row=8, column=0, columnspan=3, padx=14, pady=8, sticky="ew")
+                     justify="left", anchor="w", wraplength=760).grid(row=9, column=0, columnspan=3, padx=14, pady=8, sticky="ew")
         self.shorts_result = ctk.CTkTextbox(tab, height=120, wrap="word")
-        self.shorts_result.grid(row=9, column=0, columnspan=3, padx=14, pady=10, sticky="nsew")
+        self.shorts_result.grid(row=10, column=0, columnspan=3, padx=14, pady=10, sticky="nsew")
         self.shorts_result.configure(state="disabled")
-        tab.grid_rowconfigure(9, weight=1)
+        tab.grid_rowconfigure(10, weight=1)
 
     def _choose_shorts_video(self):
         name = filedialog.askopenfilename(title="Исходник для Shorts", filetypes=[("Видео", "*.mp4 *.mkv *.mov *.avi *.webm *.m4v"), ("Все файлы", "*.*")])
@@ -344,6 +348,8 @@ class CensorApp(ctk.CTk, TkinterDnD.DnDWrapper):
         folder = self.shorts_dir.get().strip()
         if not folder:
             raise CensorError("Укажите папку для Shorts.")
+        if len(' '.join(self.shorts_title.get().split())) > 72:
+            raise CensorError("Название должно быть не длиннее 72 символов.")
         return source, Path(folder).expanduser(), camera, content
 
     def _shorts_busy(self, busy):
@@ -361,12 +367,13 @@ class CensorApp(ctk.CTk, TkinterDnD.DnDWrapper):
         except (CensorError, ValueError) as exc:
             messagebox.showerror("Предпросмотр Shorts", str(exc))
             return
+        title = self.shorts_title.get().strip() or "Название: автоматически при экспорте"
         self._shorts_busy(True)
         def worker():
             try:
                 destination = output / "preview.png"
                 render_reaction(source, {"start": second, "end": min(duration, second + 10)}, destination,
-                                camera=camera, content=content, preview=True,
+                                camera=camera, content=content, preview=True, title=title,
                                 progress=lambda text: self.events.put(("studio_status", text)))
                 self.events.put(("shorts_preview_done", str(destination)))
             except Exception as exc:
@@ -384,13 +391,14 @@ class CensorApp(ctk.CTk, TkinterDnD.DnDWrapper):
             messagebox.showerror("Авто Shorts", str(exc))
             return
         model = self.shorts_model.get()
+        title = self.shorts_title.get().strip()
         self._shorts_busy(True)
         self.status.set("Готовлю автоматическую нарезку…")
         self.progress.set(.05)
         def worker():
             try:
                 paths = create_shorts(source, output, model=model, length=length, count=count,
-                                      camera=camera, content=content,
+                                      camera=camera, content=content, title=title,
                                       progress=lambda text: self.events.put(("studio_status", text)))
                 self.events.put(("shorts_done", [str(path) for path in paths]))
             except Exception as exc:

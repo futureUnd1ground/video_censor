@@ -120,9 +120,13 @@ fewer usable clips than requested. Automatic ranking is a review aid, not a
 semantic guarantee that the selected moments are funny or interesting.
 
 The reference-style layout is 1080×1920: streamer camera in the top 672 pixels,
-main content in the lower 1248, and short uppercase yellow subtitle phrases
-with a black outline near the bottom of the camera panel. Whisper word timings
-keep captions synchronized. Audio retains the original level with no loudness
+main content in the lower 1248, and a persistent uppercase yellow title
+with a black outline near the bottom of the camera panel. There are no speech
+subtitles in this layout. Leave **Название** blank to select a short quote from
+each clip automatically, or enter your own title (up to 72 characters). The title
+is visible throughout the clip and included in its filename. In automatic mode,
+the frame preview shows a sample title; the actual title is chosen after analysis.
+Audio retains the original level with no loudness
 normalization or compression. Every run creates a new `shorts-*` subfolder.
 
 **Камера** accepts `Авто` (OpenCV face detection) or `x,y,width,height` as
