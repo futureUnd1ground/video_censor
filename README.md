@@ -122,9 +122,13 @@ semantic guarantee that the selected moments are funny or interesting.
 The reference-style layout is 1080×1920: streamer camera in the top 672 pixels,
 main content in the lower 1248, and a persistent uppercase yellow title
 with a black outline near the bottom of the camera panel. There are no speech
-subtitles in this layout. Leave **Название** blank to select a short quote from
-each clip automatically, or enter your own title (up to 72 characters). The title
-is visible throughout the clip and included in its filename. In automatic mode,
+subtitles in this layout. Leave **Название** blank to build a title from the entire clip: complete
+sentences and connected setup/payoff phrases are ranked by recurring topics,
+actions, reactions, and reveals. Greetings are filtered out; sentences are not
+cut to their first eight words. Titles use the spoken text rather than invented
+events. You can also enter your own title (up to 96 characters). The title
+is visible throughout the clip and included in its filename. Longer titles
+use a slightly smaller font and wrap across lines without dropping the ending. In automatic mode,
 the frame preview shows a sample title; the actual title is chosen after analysis.
 Audio retains the original level with no loudness
 normalization or compression. Every run creates a new `shorts-*` subfolder.

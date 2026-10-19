@@ -10,6 +10,7 @@ import tempfile
 import textwrap
 
 from engine import CensorError, probe_media, require_tools
+from titles import TITLE_LIMIT, short_title
 from studio import _escape_filter_path, audio_peaks, transcribe_video
 
 def parse_region(value: str) -> tuple[float, float, float, float] | None:
@@ -168,36 +169,13 @@ def _ass_time(seconds):
     return f'{hours}:{minutes:02}:{seconds:02}.{ticks:02}'
 
 
-def short_title(transcript, start, end):
-    """Choose a short quote from the clip without inventing a description."""
-    phrases = []
-    for segment in transcript:
-        if float(segment['end']) <= start or float(segment['start']) >= end:
-            continue
-        words = segment.get('words')
-        text = (' '.join(str(w.get('word', '')) for w in words
-                         if float(w['end']) > start and float(w['start']) < end)
-                if words else str(segment.get('text', '')))
-        phrases.extend(phrase.strip() for phrase in re.split(r'[.!?…]+', text) if phrase.strip())
-    if not phrases:
-        return 'Момент из стрима'
-    phrase = max(phrases, key=lambda text: (2 <= len(text.split()) <= 8, min(len(text.split()), 8), -len(text)))
-    title = []
-    for word in phrase.split():
-        if len(' '.join(title + [word])) > 64:
-            break
-        title.append(word)
-        if len(title) == 8:
-            break
-    return ' '.join(title) or phrase[:64]
-
-
 def reaction_title(title, duration):
     """One persistent yellow title; no word-timed speech captions."""
     text = ' '.join(str(title).split()).replace('\\', '/').replace('{', '(').replace('}', ')').upper()
-    if not text or len(text) > 72:
-        raise CensorError('Название должно содержать от 1 до 72 символов.')
-    text = r'\N'.join(textwrap.wrap(text, width=26, break_on_hyphens=False))
+    if not text or len(text) > TITLE_LIMIT:
+        raise CensorError('Название должно содержать от 1 до 96 символов.')
+    font_size, wrap_width = (52, 30) if len(text) > 72 else (58, 26)
+    text = r'\N'.join(textwrap.wrap(text, width=wrap_width, break_on_hyphens=False))
     header = '''[Script Info]
 ScriptType: v4.00+
 PlayResX: 1080
@@ -211,6 +189,7 @@ Style: Reaction,DejaVu Sans,58,&H0000FFFF,&H0000FFFF,&H00000000,&H80000000,-1,0,
 [Events]
 Format: Layer,Start,End,Style,Name,MarginL,MarginR,MarginV,Effect,Text
 '''
+    header = header.replace('DejaVu Sans,58,', f'DejaVu Sans,{font_size},')
     return header + f"Dialogue: 0,0:00:00.00,{_ass_time(duration)},Reaction,,0,0,0,,{text}\n"
 
 

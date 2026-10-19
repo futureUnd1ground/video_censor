@@ -76,7 +76,7 @@ class ShortsTests(unittest.TestCase):
         self.assertIn('&H0000FFFF', overlay)
         self.assertNotIn(r'{\pos', reaction_title(r'{\pos(0,0)}текст', 10))
         with self.assertRaises(CensorError):
-            reaction_title('а' * 73, 10)
+            reaction_title('а' * 97, 10)
 
     def test_split_export_preview_and_automatic_batch(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -130,7 +130,7 @@ class ShortsTests(unittest.TestCase):
             self.assertGreater(int(late_yellow.sum()), 100)
             with patch('shorts.transcribe_video', return_value=(transcript, 'ru')):
                 first = create_shorts(source, root / 'batch', count=2, length=10, camera=camera, content=content)
-                second = create_shorts(source, root / 'batch', count=2, length=10, camera=camera, content=content, title='Моё название')
+                second = create_shorts(source, root / 'batch', count=2, length=10, camera=camera, content=content, title='Моё название: никто не ожидал три легендарных меча в самом последнем сундуке!')
             self.assertEqual(len(first), 1)
             self.assertNotEqual(first[0].parent, second[0].parent)
             self.assertTrue(first[0].is_file())

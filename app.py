@@ -315,7 +315,7 @@ class CensorApp(ctk.CTk, TkinterDnD.DnDWrapper):
         ctk.CTkLabel(tab, text="Модель речи").grid(row=6, column=0, padx=14, pady=8, sticky="w")
         ctk.CTkOptionMenu(tab, variable=self.shorts_model, values=MODEL_OPTIONS).grid(row=6, column=1, sticky="w")
         ctk.CTkLabel(tab, text="Название (пусто — авто)").grid(row=7, column=0, padx=14, pady=8, sticky="w")
-        ctk.CTkEntry(tab, textvariable=self.shorts_title, placeholder_text="До 72 символов; автоматически — короткая фраза из нарезки").grid(row=7, column=1, columnspan=2, padx=(0,14), pady=8, sticky="ew")
+        ctk.CTkEntry(tab, textvariable=self.shorts_title, placeholder_text="До 96 символов; автоматически — по всему фрагменту").grid(row=7, column=1, columnspan=2, padx=(0,14), pady=8, sticky="ew")
         actions = ctk.CTkFrame(tab, fg_color="transparent")
         actions.grid(row=8, column=0, columnspan=3, padx=14, pady=14, sticky="w")
         self.shorts_preview_button = ctk.CTkButton(actions, text="Проверить кадр", command=self._preview_short_frame)
@@ -348,8 +348,8 @@ class CensorApp(ctk.CTk, TkinterDnD.DnDWrapper):
         folder = self.shorts_dir.get().strip()
         if not folder:
             raise CensorError("Укажите папку для Shorts.")
-        if len(' '.join(self.shorts_title.get().split())) > 72:
-            raise CensorError("Название должно быть не длиннее 72 символов.")
+        if len(' '.join(self.shorts_title.get().split())) > 96:
+            raise CensorError("Название должно быть не длиннее 96 символов.")
         return source, Path(folder).expanduser(), camera, content
 
     def _shorts_busy(self, busy):
