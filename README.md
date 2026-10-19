@@ -107,3 +107,34 @@ and merge overlapping intervals. The original five presets remain available.
 Run integration checks with `python -m unittest discover -s tests -v` in the
 installed virtual environment. They render all twelve presets with FFmpeg,
 download a local test video, and stop a stalled connection.
+
+## Automatic reaction Shorts
+
+Open **Авто Shorts**, choose the source and output folder, and click
+**Создать Shorts автоматически**. The app transcribes the source locally,
+ranks speech windows with audio peaks, and exports up to the requested number
+of non-overlapping clips (10–60 seconds, default 35 seconds / 5 clips).
+It prefers speech boundaries; the selected length is a target, with a maximum
+of 60 seconds. A shorter source may produce a shorter clip, and there may be
+fewer usable clips than requested. Automatic ranking is a review aid, not a
+semantic guarantee that the selected moments are funny or interesting.
+
+The reference-style layout is 1080×1920: streamer camera in the top 672 pixels,
+main content in the lower 1248, and short uppercase yellow subtitle phrases
+with a black outline near the bottom of the camera panel. Whisper word timings
+keep captions synchronized. Audio retains the original level with no loudness
+normalization or compression. Every run creates a new `shorts-*` subfolder.
+
+**Камера** accepts `Авто` (OpenCV face detection) or `x,y,width,height` as
+percentages of the source frame, for example `0,0,30,35` for a camera at top left.
+**Контент** uses the same coordinates; `0,0,100,100` starts with the full frame
+and center-crops it into the lower panel. For a reaction recorded as side-by-side
+video, specify the content region separately to exclude the webcam.
+**Проверить кадр** saves and opens a preview at the entered source time.
+Auto detection can confuse a face in the watched content with the streamer;
+use the preview and manual regions to correct it. An undetected camera produces
+an actionable error instead of silently duplicating the full frame.
+
+Install updated dependencies with `python -m pip install -r requirements.txt`.
+`opencv-python-headless` adds local face detection without a separate desktop UI.
+The existing Studio and its export layouts remain available independently.

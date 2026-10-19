@@ -19,6 +19,7 @@ from tkinterdnd2 import COPY, DND_FILES, REFUSE_DROP, TkinterDnD
 
 from engine import CENSOR_MODES, CensorError, Hit, detect, load_terms, probe_media, render
 from downloads import download_stream
+from shorts import create_shorts, parse_region, render_reaction
 from studio import (audio_peaks, chat_activity, parse_chat_log, read_project,
                     render_moment, transcript_to_srt, transcribe_video, visual_highlights, write_project)
 
@@ -71,6 +72,14 @@ class CensorApp(ctk.CTk, TkinterDnD.DnDWrapper):
         self.studio_subtitles = ctk.BooleanVar(value=True)
         self.studio_chat_overlay = ctk.BooleanVar(value=False)
         self.studio_watermark = ctk.StringVar()
+        self.shorts_video = ctk.StringVar()
+        self.shorts_dir = ctk.StringVar(value=str(Path.home() / "Videos" / "Cut-Helper shorts"))
+        self.shorts_camera = ctk.StringVar(value="Авто")
+        self.shorts_content = ctk.StringVar(value="0,0,100,100")
+        self.shorts_length = ctk.StringVar(value="35")
+        self.shorts_count = ctk.StringVar(value="5")
+        self.shorts_model = ctk.StringVar(value="small")
+        self.shorts_frame_time = ctk.StringVar(value="0")
         self.project_path: Path | None = None
         self.hit_checks: list[ctk.CTkCheckBox] = []
         self.external_lists: list[Path] = []
@@ -129,6 +138,8 @@ class CensorApp(ctk.CTk, TkinterDnD.DnDWrapper):
         censor_tab = self.tabs.add("Цензура")
         studio_tab = self.tabs.add("Студия")
         self.studio_tab = studio_tab
+        shorts_tab = self.tabs.add("Авто Shorts")
+        self._build_shorts_tab(shorts_tab)
         online_tab = self.tabs.add("Превью и загрузки")
         history_tab = self.tabs.add("История")
         for tab in (censor_tab, studio_tab, online_tab, history_tab):
@@ -276,6 +287,115 @@ class CensorApp(ctk.CTk, TkinterDnD.DnDWrapper):
         self.progress.grid(row=2, column=0, padx=22, pady=(10, 3), sticky="ew")
         self.progress.set(0)
         ctk.CTkLabel(self, textvariable=self.status, anchor="w").grid(row=3, column=0, padx=22, pady=(2, 12), sticky="ew")
+
+    def _build_shorts_tab(self, tab):
+        tab.grid_columnconfigure(1, weight=1)
+        ctk.CTkLabel(tab, text="Стример сверху · контент снизу · жёлтые субтитры",
+                     font=ctk.CTkFont(size=18, weight="bold")).grid(row=0, column=0, columnspan=3, padx=14, pady=14, sticky="w")
+        ctk.CTkLabel(tab, text="Исходное видео").grid(row=1, column=0, padx=14, pady=8, sticky="w")
+        ctk.CTkEntry(tab, textvariable=self.shorts_video).grid(row=1, column=1, sticky="ew", pady=8)
+        ctk.CTkButton(tab, text="Выбрать…", width=110, command=self._choose_shorts_video).grid(row=1, column=2, padx=14)
+        ctk.CTkLabel(tab, text="Папка Shorts").grid(row=2, column=0, padx=14, pady=8, sticky="w")
+        ctk.CTkEntry(tab, textvariable=self.shorts_dir).grid(row=2, column=1, sticky="ew", pady=8)
+        ctk.CTkButton(tab, text="Обзор…", width=110,
+                      command=lambda: self._choose_download_dir(self.shorts_dir)).grid(row=2, column=2, padx=14)
+        ctk.CTkLabel(tab, text="Камера: x,y,ш,в (%)").grid(row=3, column=0, padx=14, pady=8, sticky="w")
+        ctk.CTkEntry(tab, textvariable=self.shorts_camera).grid(row=3, column=1, sticky="ew", pady=8)
+        ctk.CTkLabel(tab, text="Авто или 0,0,30,35").grid(row=3, column=2, padx=14)
+        ctk.CTkLabel(tab, text="Контент: x,y,ш,в (%)").grid(row=4, column=0, padx=14, pady=8, sticky="w")
+        ctk.CTkEntry(tab, textvariable=self.shorts_content).grid(row=4, column=1, sticky="ew", pady=8)
+        ctk.CTkLabel(tab, text="0,0,100,100 — весь кадр").grid(row=4, column=2, padx=14)
+        options = ctk.CTkFrame(tab, fg_color="transparent")
+        options.grid(row=5, column=0, columnspan=3, padx=14, pady=10, sticky="ew")
+        for label, variable in (("Длина, сек (10–60)", self.shorts_length), ("Количество (1–20)", self.shorts_count),
+                                ("Кадр для проверки, сек", self.shorts_frame_time)):
+            ctk.CTkLabel(options, text=label).pack(side="left", padx=(0, 6))
+            ctk.CTkEntry(options, textvariable=variable, width=60).pack(side="left", padx=(0, 12))
+        ctk.CTkLabel(tab, text="Модель речи").grid(row=6, column=0, padx=14, pady=8, sticky="w")
+        ctk.CTkOptionMenu(tab, variable=self.shorts_model, values=MODEL_OPTIONS).grid(row=6, column=1, sticky="w")
+        actions = ctk.CTkFrame(tab, fg_color="transparent")
+        actions.grid(row=7, column=0, columnspan=3, padx=14, pady=14, sticky="w")
+        self.shorts_preview_button = ctk.CTkButton(actions, text="Проверить кадр", command=self._preview_short_frame)
+        self.shorts_preview_button.pack(side="left")
+        self.shorts_button = ctk.CTkButton(actions, text="Создать Shorts автоматически", command=self._auto_shorts)
+        self.shorts_button.pack(side="left", padx=10)
+        ctk.CTkLabel(tab, text="Камера занимает верхнюю треть, контент — нижнюю часть. Области задаются в процентах исходного кадра.\n"
+                     "Проверьте кадр: автопоиск лица может выбрать героя видео вместо стримера.\n"
+                     "Моменты выбираются по речи и всплескам звука; это предварительный автоматический отбор.\n"
+                     "Готовые файлы: 1080×1920, исходная громкость. Каждый запуск сохраняется в новую папку.",
+                     justify="left", anchor="w", wraplength=760).grid(row=8, column=0, columnspan=3, padx=14, pady=8, sticky="ew")
+        self.shorts_result = ctk.CTkTextbox(tab, height=120, wrap="word")
+        self.shorts_result.grid(row=9, column=0, columnspan=3, padx=14, pady=10, sticky="nsew")
+        self.shorts_result.configure(state="disabled")
+        tab.grid_rowconfigure(9, weight=1)
+
+    def _choose_shorts_video(self):
+        name = filedialog.askopenfilename(title="Исходник для Shorts", filetypes=[("Видео", "*.mp4 *.mkv *.mov *.avi *.webm *.m4v"), ("Все файлы", "*.*")])
+        if name:
+            self.shorts_video.set(name)
+
+    def _shorts_request(self):
+        source = Path(self.shorts_video.get()).expanduser()
+        if not source.is_file():
+            raise CensorError("Выберите исходное видео на вкладке «Авто Shorts».")
+        camera, content = self.shorts_camera.get(), self.shorts_content.get()
+        parse_region(camera)
+        parse_region(content)
+        folder = self.shorts_dir.get().strip()
+        if not folder:
+            raise CensorError("Укажите папку для Shorts.")
+        return source, Path(folder).expanduser(), camera, content
+
+    def _shorts_busy(self, busy):
+        state = "disabled" if busy else "normal"
+        self.shorts_button.configure(state=state)
+        self.shorts_preview_button.configure(state=state)
+
+    def _preview_short_frame(self):
+        try:
+            source, output, camera, content = self._shorts_request()
+            second = float(self.shorts_frame_time.get().replace(",", "."))
+            duration, _ = probe_media(source)
+            if not 0 <= second < duration:
+                raise CensorError("Время кадра должно находиться в пределах видео.")
+        except (CensorError, ValueError) as exc:
+            messagebox.showerror("Предпросмотр Shorts", str(exc))
+            return
+        self._shorts_busy(True)
+        def worker():
+            try:
+                destination = output / "preview.png"
+                render_reaction(source, {"start": second, "end": min(duration, second + 10)}, destination,
+                                camera=camera, content=content, preview=True,
+                                progress=lambda text: self.events.put(("studio_status", text)))
+                self.events.put(("shorts_preview_done", str(destination)))
+            except Exception as exc:
+                self.events.put(("shorts_error", str(exc)))
+        threading.Thread(target=worker, daemon=True).start()
+
+    def _auto_shorts(self):
+        try:
+            source, output, camera, content = self._shorts_request()
+            length = int(self.shorts_length.get())
+            count = int(self.shorts_count.get())
+            if not 10 <= length <= 60 or not 1 <= count <= 20:
+                raise CensorError("Длина: 10–60 секунд. Количество: 1–20.")
+        except (CensorError, ValueError) as exc:
+            messagebox.showerror("Авто Shorts", str(exc))
+            return
+        model = self.shorts_model.get()
+        self._shorts_busy(True)
+        self.status.set("Готовлю автоматическую нарезку…")
+        self.progress.set(.05)
+        def worker():
+            try:
+                paths = create_shorts(source, output, model=model, length=length, count=count,
+                                      camera=camera, content=content,
+                                      progress=lambda text: self.events.put(("studio_status", text)))
+                self.events.put(("shorts_done", [str(path) for path in paths]))
+            except Exception as exc:
+                self.events.put(("shorts_error", str(exc)))
+        threading.Thread(target=worker, daemon=True).start()
 
     def _choose_video(self):
         name = filedialog.askopenfilename(title="Выберите видео", filetypes=[("Видео", "*.mp4 *.mkv *.mov *.avi *.webm *.m4v"), ("Все файлы", "*.*")])
@@ -896,6 +1016,24 @@ class CensorApp(ctk.CTk, TkinterDnD.DnDWrapper):
                         self.status.set(f"Готово: {payload}")
                     self.analyze_button.configure(state="normal")
                     messagebox.showinfo("Готово", f"Файл сохранён:\n{payload}")
+                elif event == "shorts_preview_done":
+                    self._shorts_busy(False)
+                    self.status.set(f"Кадр Shorts: {payload}")
+                    self._open_path(Path(payload))
+                elif event == "shorts_done":
+                    self._shorts_busy(False)
+                    self.progress.set(1)
+                    self.shorts_result.configure(state="normal")
+                    self.shorts_result.delete("1.0", "end")
+                    self.shorts_result.insert("end", "Сохранено Shorts: " + str(len(payload)) + "\n" + "\n".join(payload))
+                    self.shorts_result.configure(state="disabled")
+                    self.status.set(f"Shorts готовы: {len(payload)}. Проверьте ролики перед публикацией.")
+                    messagebox.showinfo("Shorts готовы", "Сохранено:\n" + "\n".join(payload))
+                elif event == "shorts_error":
+                    self._shorts_busy(False)
+                    self.progress.set(0)
+                    self.status.set("Ошибка Shorts")
+                    messagebox.showerror("Авто Shorts", payload)
                 elif event == "studio_status":
                     self.status.set(payload)
                 elif event == "transcript_done":
