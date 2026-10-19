@@ -77,7 +77,7 @@ Drag-and-drop is registered on the whole interface, including tabs and input fie
 
 - Detection uses word-level timestamps and exact token matching by default. Prefix and substring matching only happen when a list entry includes an explicit `*` mask.
 - Bleep, Mute, and Custom Sound preserve the original video stream where possible. Fast-Forward speeds the flagged interval up 3x; Cut removes it. These editing modes re-encode video and audio for clean joins.
-- Rendered audio is loudness-normalized to `-16 LUFS` with a `-1.5 dBTP` peak target. Bleep/custom-sound mixing does not attenuate the source according to the number of censored intervals. This makes quiet source recordings easier to hear while keeping peaks controlled.
+- Censor renders preserve the original audio level outside the selected intervals: no automatic loudness normalization, compression, or gain adjustment is applied. Bleep/custom-sound mixing does not attenuate the source according to the number of censored intervals. Studio exports also preserve source levels. Audio is re-encoded, so small codec differences are possible; replacement sounds have their own levels.
 - Output is MP4. The renderer tries NVENC when available and falls back to `libx264`.
 - The application does not upload media. Model files are downloaded from the model registry on first use.
 

@@ -204,7 +204,7 @@ def render(source: Path, destination: Path, hits: list[Hit], mode: str, padding_
         conditions = "+".join(f"between(t,{start:.6f},{end:.6f})" for start, end in ranges)
         graph.append(f"[0:a]volume=0:enable='{conditions}'[muted]")
         if mode == "Mute" or mode in VISUAL_MODES:
-            graph.append("[muted]loudnorm=I=-16:TP=-1.5:LRA=11[aout]")
+            graph.append("[muted]anull[aout]")
         else:
             sounds: list[str] = []
             for index, (start, end) in enumerate(ranges):
@@ -226,8 +226,7 @@ def render(source: Path, destination: Path, hits: list[Hit], mode: str, padding_
                     graph.append(f"[{input_index}:a]atrim=duration={duration_s:.6f},asetpts=PTS-STARTPTS,volume=0.8,adelay={round(start * 1000)}|{round(start * 1000)}[s{index}]")
                 sounds.append(f"[s{index}]")
             graph.append("[muted]" + "".join(sounds) +
-                         f"amix=inputs={len(sounds) + 1}:duration=first:dropout_transition=0:normalize=0,"
-                         "loudnorm=I=-16:TP=-1.5:LRA=11[aout]")
+                         f"amix=inputs={len(sounds) + 1}:duration=first:dropout_transition=0:normalize=0[aout]")
         video_map = "0:v:0"
         video_codec = ["-c:v", "copy"]
         if mode in VISUAL_MODES:
@@ -272,7 +271,7 @@ def render(source: Path, destination: Path, hits: list[Hit], mode: str, padding_
         graph.append("".join(vlabels) + f"concat=n={len(vlabels)}:v=1:a=0[vout]")
         if has_audio:
             graph.append("".join(alabels) +
-                         f"concat=n={len(alabels)}:v=0:a=1,loudnorm=I=-16:TP=-1.5:LRA=11[aout]")
+                         f"concat=n={len(alabels)}:v=0:a=1[aout]")
         command.extend(["-filter_complex", ";".join(graph), "-map", "[vout]"])
         if has_audio:
             command.extend(["-map", "[aout]"])

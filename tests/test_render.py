@@ -1,10 +1,21 @@
+from array import array
 import json
+import math
 from pathlib import Path
 import subprocess
 import tempfile
 import unittest
 
 from engine import CENSOR_MODES, Hit, render
+
+
+def audio_rms(path, start, duration):
+    samples = array('f')
+    samples.frombytes(subprocess.check_output([
+        'ffmpeg', '-v', 'error', '-i', str(path), '-ss', str(start),
+        '-t', str(duration), '-vn', '-ac', '1', '-ar', '48000',
+        '-f', 'f32le', 'pipe:1']))
+    return math.sqrt(sum(value * value for value in samples) / len(samples))
 
 
 class RenderTests(unittest.TestCase):
@@ -15,10 +26,13 @@ class RenderTests(unittest.TestCase):
             subprocess.run(['ffmpeg', '-v', 'error', '-y', '-f', 'lavfi', '-i',
                             'testsrc2=size=160x120:rate=20:duration=2', '-f', 'lavfi', '-i',
                             'sine=frequency=600:duration=2', '-c:v', 'libx264', '-c:a', 'aac',
+                            '-af', "volume=0.25:enable='lt(t,1.1)'",
                             '-shortest', str(source)], check=True)
             sound = root / 'sound.wav'
             subprocess.run(['ffmpeg', '-v', 'error', '-y', '-f', 'lavfi', '-i',
                             'sine=frequency=300:duration=0.1', str(sound)], check=True)
+            reference = [(start, audio_rms(source, start, .2)) for start in (.15, 1.4)]
+            self.assertGreater(20 * math.log10(reference[1][1] / reference[0][1]), 10)
             for mode in CENSOR_MODES:
                 with self.subTest(mode=mode):
                     output = root / f'{mode}.mp4'
@@ -29,6 +43,15 @@ class RenderTests(unittest.TestCase):
                     expected = 1.5 if mode == 'Cut' else 2 - .5 * 2/3 if mode == 'Fast-Forward' else 2
                     self.assertAlmostEqual(float(data['format']['duration']), expected, delta=.16)
                     self.assertEqual({s['codec_type'] for s in data['streams']}, {'video', 'audio'})
+                    # Both quiet and loud speech must keep their original level,
+                    # including after timeline changes in Cut / Fast-Forward.
+                    for start, original_rms in reference:
+                        offset = .5 if mode == 'Cut' else 1/3 if mode == 'Fast-Forward' else 0
+                        output_start = start - offset if start > 1 else start
+                        processed_rms = audio_rms(output, output_start, .2)
+                        difference_db = 20 * math.log10(processed_rms / original_rms)
+                        self.assertLess(abs(difference_db), .5,
+                                        f'{mode}: level changed by {difference_db:.2f} dB')
 
 
 if __name__ == '__main__':
