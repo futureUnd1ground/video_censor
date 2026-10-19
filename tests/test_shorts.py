@@ -3,16 +3,41 @@ from pathlib import Path
 import subprocess
 import tempfile
 import unittest
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 
 import cv2
+import numpy as np
 
 from engine import CensorError
-from shorts import create_shorts, detect_camera, parse_region, reaction_title, render_reaction, short_title, select_moments
+from shorts import _camera_faces, create_shorts, detect_camera, parse_region, reaction_title, render_reaction, short_title, select_moments
 from test_render import audio_rms
 
 
 class ShortsTests(unittest.TestCase):
+    def test_corner_detections_map_to_source_and_are_not_counted_twice(self):
+        detector = Mock()
+        # Same source face at x=650,y=50,w=40,h=50, seen at two scales.
+        full = np.array([[1040, 80, 64, 80] + [0] * 10 + [.8]], dtype=np.float32)
+        corner = np.array([[210 * 640/360, 50 * 356/200, 40 * 640/360,
+                            50 * 356/200] + [0] * 10 + [.95]], dtype=np.float32)
+        detector.detect.side_effect = [(None, full), (None, None), (None, None),
+                                       (None, corner), (None, None)]
+        faces = _camera_faces(np.zeros((400, 800, 3), dtype=np.uint8), detector)
+        self.assertEqual(detector.setInputSize.call_count, 5)
+        self.assertEqual(len(faces), 1)
+        for actual, expected in zip(faces[0], (.8375, .1875, .05, .125, .95)):
+            self.assertAlmostEqual(actual, expected, places=5)
+
+    def test_one_frame_false_positive_is_rejected(self):
+        capture = Mock()
+        capture.read.return_value = (True, np.zeros((400, 800, 3), dtype=np.uint8))
+        face = (.85, .2, .05, .1, .95)
+        with patch('cv2.VideoCapture', return_value=capture), patch(
+                'shorts._camera_faces', side_effect=[[face]] + [[]] * 11):
+            with self.assertRaisesRegex(CensorError, 'Камера не найдена'):
+                detect_camera(Path('synthetic.mp4'), 0, 30)
+        capture.release.assert_called_once()
+
     def test_regions_reject_invalid_bounds(self):
         self.assertIsNone(parse_region('Авто'))
         self.assertEqual(parse_region('10,20,30,40'), (.1, .2, .3, .4))
@@ -69,9 +94,8 @@ class ShortsTests(unittest.TestCase):
             with self.assertRaisesRegex(CensorError, 'Камера не найдена'):
                 detect_camera(source, 0, 2)
             # A stable webcam is preferred to a larger content face, ignoring badges.
-            with patch('cv2.CascadeClassifier') as classifier:
-                classifier.return_value.detectMultiScale.return_value = [
-                    (30, 30, 50, 60), (300, 180, 120, 120), (30, 415, 25, 25)]
+            with patch('shorts._camera_faces', return_value=[
+                    (.07, .13, .06, .13, .95), (.45, .53, .15, .26, .95)]):
                 camera_region = detect_camera(source, 0, 2)
                 self.assertLess(camera_region[0], .15)
                 self.assertLess(camera_region[1], .15)

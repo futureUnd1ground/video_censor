@@ -129,13 +129,15 @@ the frame preview shows a sample title; the actual title is chosen after analysi
 Audio retains the original level with no loudness
 normalization or compression. Every run creates a new `shorts-*` subfolder.
 
-**Камера** accepts `Авто` (OpenCV face detection) or `x,y,width,height` as
+**Камера** accepts `Авто` (local YuNet neural face detection) or `x,y,width,height` as
 percentages of the source frame, for example `0,0,30,35` for a camera at top left.
 **Контент** uses the same coordinates; `0,0,100,100` starts with the full frame
 and center-crops it into the lower panel. For a reaction recorded as side-by-side
 video, specify the content region separately to exclude the webcam.
 **Проверить кадр** saves and opens a preview at the entered source time.
-Auto detection can confuse a face in the watched content with the streamer;
+The bundled 227 KiB YuNet model works offline. Detection checks 12 frames,
+including enlarged corners to locate small webcams, and prefers stable faces
+near frame edges. Auto detection can confuse a face in the watched content with the streamer;
 use the preview and manual regions to correct it. An undetected camera produces
 an actionable error instead of silently duplicating the full frame.
 

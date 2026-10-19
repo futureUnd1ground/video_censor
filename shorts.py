@@ -1,4 +1,4 @@
-"""Local automatic reaction Shorts: moment selection, split framing and timed captions."""
+"""Local automatic reaction Shorts: moment selection, split framing and persistent titles."""
 from __future__ import annotations
 
 import math
@@ -27,46 +27,93 @@ def parse_region(value: str) -> tuple[float, float, float, float] | None:
     return x, y, width, height
 
 
+def _camera_faces(frame, detector):
+    """Detect at frame scale and in enlarged corners; return normalized boxes."""
+    import cv2
+    height, width = frame.shape[:2]
+    corner_w, corner_h = max(1, round(width * .45)), max(1, round(height * .5))
+    views = [(0, 0, width, height, 1280)]
+    views += [(x, y, corner_w, corner_h, 640)
+              for x in (0, width - corner_w) for y in (0, height - corner_h)]
+    faces = []
+    for left, top, view_w, view_h, limit in views:
+        scale = min(2., limit / max(view_w, view_h))
+        image = cv2.resize(frame[top:top + view_h, left:left + view_w],
+                           (max(1, round(view_w * scale)), max(1, round(view_h * scale))))
+        image_h, image_w = image.shape[:2]
+        detector.setInputSize((image_w, image_h))
+        _, found = detector.detect(image)
+        if found is None:
+            continue
+        for row in found:
+            x, y, w, h = [float(value) for value in row[:4]]
+            w, h = w * view_w / image_w, h * view_h / image_h
+            cx = left + x * view_w / image_w + w / 2
+            cy = top + y * view_h / image_h + h / 2
+            if min(w, h) < 12 or not (0 <= cx < width and 0 <= cy < height) or cy / height > .9:
+                continue  # Tiny badges and bottom-row avatars are not webcams.
+            faces.append((cx / width, cy / height, w / width, h / height, float(row[-1])))
+    # One face can appear in both the full frame and a corner. Count it once.
+    unique = []
+    for face in sorted(faces, key=lambda face: -face[4]):
+        if not any(abs(face[0] - other[0]) < .4 * min(face[2], other[2])
+                   and abs(face[1] - other[1]) < .4 * min(face[3], other[3]) for other in unique):
+            unique.append(face)
+    return unique
+
+
 def detect_camera(source: Path, start: float, end: float) -> tuple[float, float, float, float]:
-    """Estimate a stable face region; manual crop remains available for overlays."""
+    """Use local YuNet detections and temporal stability to locate the webcam."""
     try:
         import cv2
     except ImportError as exc:
         raise CensorError("Для автопоиска камеры установите зависимости или задайте область камеры вручную.") from exc
-    detector = cv2.CascadeClassifier(cv2.data.haarcascades + 'haarcascade_frontalface_default.xml')
+    model = Path(__file__).resolve().parent / 'models' / 'yunet' / 'face_detection_yunet_2023mar.onnx'
+    if not model.is_file():
+        raise CensorError("Не найдена модель YuNet. Обновите приложение вместе с папкой models или задайте камеру вручную.")
+    try:
+        detector = cv2.FaceDetectorYN.create(str(model), '', (320, 320), .7, .3, 5000)
+    except cv2.error as exc:
+        raise CensorError("Не удалось загрузить модель камеры YuNet. Переустановите зависимости приложения.") from exc
     capture = cv2.VideoCapture(str(source))
     groups = []
+    valid_frames = 0
     try:
-        for index in range(9):
-            second = start + (end - start) * (index + .5) / 9
+        for index in range(12):
+            second = start + (end - start) * (index + .5) / 12
             capture.set(cv2.CAP_PROP_POS_MSEC, second * 1000)
             ok, frame = capture.read()
             if not ok:
                 continue
+            valid_frames += 1
             height, width = frame.shape[:2]
-            gray = cv2.cvtColor(cv2.resize(frame, (800, max(1, round(height * 800 / width)))), cv2.COLOR_BGR2GRAY)
-            gh, gw = gray.shape
             seen = set()
-            for x, y, w, h in detector.detectMultiScale(gray, scaleFactor=1.1, minNeighbors=5, minSize=(20, 20)):
-                face = ((x + w / 2) / gw, (y + h / 2) / gh, w / gw, h / gh)
-                if face[1] > .9:  # Ignore avatar badges along the bottom edge.
-                    continue
-                group = next((g for g in groups if abs(g[0][0] - face[0]) < .09 and abs(g[0][1] - face[1]) < .09), None)
+            for face in _camera_faces(frame, detector):
+                group = next((g for g in groups
+                              if abs(statistics.median(f[0] for f in g) - face[0]) < max(.025, min(.08, face[2]))
+                              and abs(statistics.median(f[1] for f in g) - face[1]) < max(.025, min(.08, face[3]))), None)
                 if group is None:
                     group = []
                     groups.append(group)
                 if id(group) not in seen:
                     group.append(face)
                     seen.add(id(group))
+        if not valid_frames:
+            raise CensorError("Не удалось прочитать кадры исходника для поиска камеры. Проверьте видео.")
+        groups = [g for g in groups if len(g) >= min(2, valid_frames)]
         if not groups:
             raise CensorError("Камера не найдена. Задайте её область вручную и нажмите «Проверить кадр».")
-        # A webcam face is usually smaller than faces in the content being watched.
-        group = max(groups, key=lambda g: (len(g), -statistics.median(f[2] * f[3] for f in g)))
+        def rank(group):
+            cx, cy = (statistics.median(f[i] for f in group) for i in (0, 1))
+            edge = max(abs(cx - .5), abs(cy - .5)) * 2
+            return (len(group) * (1 + .4 * edge), statistics.mean(f[4] for f in group),
+                    -statistics.median(f[2] * f[3] for f in group))
+        group = max(groups, key=rank)
         cx, cy, fw, fh = [statistics.median(face[i] for face in group) for i in range(4)]
-        crop_w = min(1., max(fw * 3.6, fh * height / width * 3.0))
+        crop_w = min(1., max(fw * 4.2, fh * height / width * 3.2))
         crop_h = min(1., crop_w * width / height * 672 / 1080)
         crop_w = min(crop_w, crop_h * height / width * 1080 / 672)
-        return max(0., min(1 - crop_w, cx - crop_w / 2)), max(0., min(1 - crop_h, cy - crop_h * .38)), crop_w, crop_h
+        return max(0., min(1 - crop_w, cx - crop_w / 2)), max(0., min(1 - crop_h, cy - crop_h * .48)), crop_w, crop_h
     finally:
         capture.release()
 
